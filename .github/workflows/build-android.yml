@@ -1,0 +1,283 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 9 * * 1' # weekly: Monday 09:00 UTC
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: openclaw/openclaw
+  SOURCE_DIR: openclaw
+  ANDROID_DIR: openclaw/apps/android
+  RELEASE_TAG: android-latest
+  RELEASE_NAME: Android latest
+  MAX_APK_SIZE_MB: 80
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          path: ${{ env.SOURCE_DIR }}
+          fetch-depth: 1
+
+      - name: Show workspace layout
+        run: |
+          set -euo pipefail
+          pwd
+          ls -lah
+          find . -maxdepth 3 -type d | sort
+
+      - name: Verify Android project exists
+        run: |
+          set -euo pipefail
+          test -d "${ANDROID_DIR}"
+          test -f "${ANDROID_DIR}/gradlew" || test -f "${ANDROID_DIR}/build.gradle" || test -f "${ANDROID_DIR}/settings.gradle" || test -f "${ANDROID_DIR}/settings.gradle.kts"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Accept SDK licenses
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Install build-tools and platform tools
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools" "build-tools;35.0.0" >/dev/null
+
+      - name: Decode preferred signing keystore
+        id: keystore_main
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_KEYSTORE_B64:-}" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > "${ANDROID_DIR}/release.jks"
+            test -s "${ANDROID_DIR}/release.jks"
+            echo "using_main_keystore=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "using_main_keystore=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate fallback signing keystore
+        if: steps.keystore_main.outputs.using_main_keystore != 'true'
+        env:
+          FALLBACK_KEYSTORE_PASSWORD: ${{ secrets.FALLBACK_KEYSTORE_PASSWORD }}
+          FALLBACK_KEY_ALIAS: ${{ secrets.FALLBACK_KEY_ALIAS }}
+          FALLBACK_KEY_PASSWORD: ${{ secrets.FALLBACK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          STOREPASS="${FALLBACK_KEYSTORE_PASSWORD:-android}"
+          ALIAS="${FALLBACK_KEY_ALIAS:-openclaw}"
+          KEYPASS="${FALLBACK_KEY_PASSWORD:-$STOREPASS}"
+
+          keytool -genkeypair \
+            -v \
+            -keystore "${ANDROID_DIR}/release.jks" \
+            -storepass "$STOREPASS" \
+            -alias "$ALIAS" \
+            -keypass "$KEYPASS" \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 3650 \
+            -dname "CN=OpenClaw CI,O=OpenClaw,C=US"
+
+      - name: Export signing environment
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          FALLBACK_KEYSTORE_PASSWORD: ${{ secrets.FALLBACK_KEYSTORE_PASSWORD }}
+          FALLBACK_KEY_ALIAS: ${{ secrets.FALLBACK_KEY_ALIAS }}
+          FALLBACK_KEY_PASSWORD: ${{ secrets.FALLBACK_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ steps.keystore_main.outputs.using_main_keystore }}" = "true" ]; then
+            STOREPASS="${ANDROID_KEYSTORE_PASSWORD}"
+            ALIAS="${ANDROID_KEY_ALIAS}"
+            KEYPASS="${ANDROID_KEY_PASSWORD}"
+          else
+            STOREPASS="${FALLBACK_KEYSTORE_PASSWORD:-android}"
+            ALIAS="${FALLBACK_KEY_ALIAS:-openclaw}"
+            KEYPASS="${FALLBACK_KEY_PASSWORD:-$STOREPASS}"
+          fi
+
+          {
+            echo "ANDROID_KEYSTORE_PATH=${GITHUB_WORKSPACE}/${ANDROID_DIR}/release.jks"
+            echo "ANDROID_KEYSTORE_PASSWORD=${STOREPASS}"
+            echo "ANDROID_KEY_ALIAS=${ALIAS}"
+            echo "ANDROID_KEY_PASSWORD=${KEYPASS}"
+          } >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew || true
+
+      - name: Clean and build signed release APK
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon clean assembleRelease
+
+      - name: Resolve APK path
+        id: apk
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+
+          CANDIDATES=$(find app/build/outputs/apk -type f -name "*.apk" | sort || true)
+          echo "$CANDIDATES"
+
+          APK_REL="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_REL" ]; then
+            APK_REL="$(find app/build/outputs/apk -type f -name "*release*.apk" | sort | head -n1 || true)"
+          fi
+
+          if [ -z "${APK_REL:-}" ] || [ ! -f "$APK_REL" ]; then
+            echo "::error::Could not find release APK"
+            find app/build/outputs -maxdepth 6 -type f | sort || true
+            exit 1
+          fi
+
+          APK_NAME="$(basename "$APK_REL")"
+
+          echo "apk_rel=$APK_REL" >> "$GITHUB_OUTPUT"
+          echo "apk_repo_path=${ANDROID_DIR}/$APK_REL" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Check APK structure
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+          test -f "${{ steps.apk.outputs.apk_rel }}"
+          ls -lah "${{ steps.apk.outputs.apk_rel }}"
+          unzip -t "${{ steps.apk.outputs.apk_rel }}"
+
+      - name: Verify zip alignment
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -n1 || true)"
+          if [ -z "$ZIPALIGN" ]; then
+            echo "::error::zipalign not found"
+            exit 1
+          fi
+          "$ZIPALIGN" -c -v 4 "${{ steps.apk.outputs.apk_rel }}"
+
+      - name: Verify APK signature
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n1 || true)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner not found"
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "${{ steps.apk.outputs.apk_rel }}"
+
+      - name: Compute checksum and size
+        id: metadata
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+
+          APK="${{ steps.apk.outputs.apk_rel }}"
+          SIZE_BYTES="$(stat -c%s "$APK")"
+          SIZE_MB="$(python3 - <<PY
+size_bytes = $SIZE_BYTES
+print(f"{size_bytes/1024/1024:.2f}")
+PY
+)"
+          SHA256="$(sha256sum "$APK" | awk '{print $1}')"
+
+          echo "$SHA256  $(basename "$APK")" > "${{ steps.apk.outputs.apk_name }}.sha256"
+
+          MAX_BYTES="$(python3 - <<PY
+mb = int("${MAX_APK_SIZE_MB}")
+print(mb * 1024 * 1024)
+PY
+)"
+          if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
+            echo "::error::APK too large: ${SIZE_MB} MB > ${MAX_APK_SIZE_MB} MB"
+            exit 1
+          fi
+
+          echo "size_bytes=$SIZE_BYTES" >> "$GITHUB_OUTPUT"
+          echo "size_mb=$SIZE_MB" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Write release notes body
+        working-directory: ${{ env.ANDROID_DIR }}
+        run: |
+          set -euo pipefail
+          cat > release-body.md <<EOF
+          Built from commit: \`${GITHUB_SHA}\`
+
+          - Source repo: \`${SOURCE_REPO}\`
+          - Variant: \`release\`
+          - APK: \`${{ steps.apk.outputs.apk_name }}\`
+          - Size: ${{ steps.metadata.outputs.size_mb }} MB (${{ steps.metadata.outputs.size_bytes }} bytes)
+          - SHA-256: \`${{ steps.metadata.outputs.sha256 }}\`
+          - Ref: \`${GITHUB_REF}\`
+          - Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - Release page: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}
+          - APK download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${{ steps.apk.outputs.apk_name }}
+          - Checksum download: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${{ steps.apk.outputs.apk_name }}.sha256
+          EOF
+
+      - name: Upload CI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-android-release
+          path: |
+            ${{ steps.apk.outputs.apk_repo_path }}
+            ${{ env.ANDROID_DIR }}/${{ steps.apk.outputs.apk_name }}.sha256
+            ${{ env.ANDROID_DIR }}/release-body.md
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish rolling release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          body_path: ${{ env.ANDROID_DIR }}/release-body.md
+          generate_release_notes: true
+          make_latest: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.apk.outputs.apk_repo_path }}
+            ${{ env.ANDROID_DIR }}/${{ steps.apk.outputs.apk_name }}.sha256
+
+      - name: Clean sensitive files
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -f "${ANDROID_DIR}/release.jks" || true
