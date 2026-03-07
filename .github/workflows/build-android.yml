@@ -210,31 +210,31 @@ jobs:
           APK="${{ steps.apk.outputs.apk_rel }}"
           SIZE_BYTES="$(stat -c%s "$APK")"
           SIZE_MB="$(python3 - <<PY
-size_bytes = $SIZE_BYTES
-print(f"{size_bytes/1024/1024:.2f}")
-PY
-)"
-          SHA256="$(sha256sum "$APK" | awk '{print $1}')"
-
-          echo "$SHA256  $(basename "$APK")" > "${{ steps.apk.outputs.apk_name }}.sha256"
-
-          MAX_BYTES="$(python3 - <<PY
-mb = int("${MAX_APK_SIZE_MB}")
-print(mb * 1024 * 1024)
-PY
-)"
-          if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
-            echo "::error::APK too large: ${SIZE_MB} MB > ${MAX_APK_SIZE_MB} MB"
-            exit 1
-          fi
-
-          echo "size_bytes=$SIZE_BYTES" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$SIZE_MB" >> "$GITHUB_OUTPUT"
-          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
-
-      - name: Write release notes body
-        working-directory: ${{ env.ANDROID_DIR }}
-        run: |
+          size_bytes = $SIZE_BYTES
+          print(f"{size_bytes/1024/1024:.2f}")
+          PY
+          )"
+                    SHA256="$(sha256sum "$APK" | awk '{print $1}')"
+          
+                    echo "$SHA256  $(basename "$APK")" > "${{ steps.apk.outputs.apk_name }}.sha256"
+          
+                    MAX_BYTES="$(python3 - <<PY
+          mb = int("${MAX_APK_SIZE_MB}")
+          print(mb * 1024 * 1024)
+          PY
+          )"
+                    if [ "$SIZE_BYTES" -gt "$MAX_BYTES" ]; then
+                      echo "::error::APK too large: ${SIZE_MB} MB > ${MAX_APK_SIZE_MB} MB"
+                      exit 1
+                    fi
+          
+                    echo "size_bytes=$SIZE_BYTES" >> "$GITHUB_OUTPUT"
+                    echo "size_mb=$SIZE_MB" >> "$GITHUB_OUTPUT"
+                    echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          
+                - name: Write release notes body
+                  working-directory: ${{ env.ANDROID_DIR }}
+                  run: |
           set -euo pipefail
           cat > release-body.md <<EOF
           Built from commit: \`${GITHUB_SHA}\`
