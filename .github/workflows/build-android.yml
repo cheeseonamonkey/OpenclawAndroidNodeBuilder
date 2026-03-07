@@ -131,6 +131,10 @@ jobs:
             echo "ANDROID_KEYSTORE_PASSWORD=${STOREPASS}"
             echo "ANDROID_KEY_ALIAS=${ALIAS}"
             echo "ANDROID_KEY_PASSWORD=${KEYPASS}"
+            echo "OPENCLAW_ANDROID_STORE_FILE=${GITHUB_WORKSPACE}/${ANDROID_DIR}/release.jks"
+            echo "OPENCLAW_ANDROID_STORE_PASSWORD=${STOREPASS}"
+            echo "OPENCLAW_ANDROID_KEY_ALIAS=${ALIAS}"
+            echo "OPENCLAW_ANDROID_KEY_PASSWORD=${KEYPASS}"
           } >> "$GITHUB_ENV"
 
       - name: Make gradlew executable
