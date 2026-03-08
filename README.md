@@ -8,10 +8,9 @@ Find the installable APK on the **[releases page](https://github.com/cheeseonamo
 - Triggers on:
   - manual run (`workflow_dispatch`, optional `source_ref`, default `main`)
   - weekly schedule (`0 9 * * 1`)
-- Checks out `openclaw/openclaw` at the selected ref.
-- Builds `apps/android` with Gradle (`:app:assembleDebug`).
-- Validates APK, computes SHA-256 + size, uploads artifacts.
-- Publishes/overwrites release tag `android-latest` with APK + `.sha256`.
+- Checks out `openclaw/openclaw`
+- Builds `apps/android`
+- Validates APK, computes SHA-256 + size, uploads APK, and sets it as the release.
 
 ## Outputs
 - CI artifact: `openclaw-android-debug`
