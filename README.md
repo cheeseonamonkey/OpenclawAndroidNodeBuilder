@@ -1,6 +1,8 @@
 # OpenclawAndroidNodeBuilder
 
-GitHub Actions repo that builds the Android APK for [`openclaw/openclaw`](https://github.com/openclaw/openclaw) and publishes a rolling release.
+GitHub Actions repo that builds the current Android APK for [`openclaw/openclaw`](https://github.com/openclaw/openclaw) and publishes a rolling release.
+
+Find the installable APK on the **[releases page](https://github.com/cheeseonamonkey/OpenclawAndroidNodeBuilder/releases/tag/android-latest)**.
 
 ## What it does
 - Triggers on:
