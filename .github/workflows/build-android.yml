@@ -82,19 +82,19 @@ jobs:
         working-directory: ${{ env.ANDROID_DIR }}
         run: chmod +x ./gradlew
 
-      - name: Build debug APK
+      - name: Build release APK
         working-directory: ${{ env.ANDROID_DIR }}
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-        run: ./gradlew --no-daemon :app:assembleDebug
+        run: ./gradlew --no-daemon :app:assembleRelease
 
       - name: Resolve APK path
         id: apk
         working-directory: ${{ env.ANDROID_DIR }}
         run: |
           set -euo pipefail
-          APK_REL="$(find app/build/outputs/apk/debug -type f -name '*debug*.apk' | sort | tail -n1)"
+          APK_REL="$(find app/build/outputs/apk/release -type f -name '*release*.apk' | sort | tail -n1)"
           test -n "$APK_REL"
           test -f "$APK_REL"
           APK_NAME="$(basename "$APK_REL")"
@@ -132,7 +132,7 @@ jobs:
 
           - Source repo: ${SOURCE_REPO}
           - Source ref: ${SOURCE_REF}
-          - Variant: debug
+          - Variant: release
           - APK: ${{ steps.apk.outputs.apk_name }}
           - Size: ${{ steps.metadata.outputs.size_bytes }} bytes
           - SHA-256: ${{ steps.metadata.outputs.sha256 }}
@@ -144,7 +144,7 @@ jobs:
       - name: Upload CI artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openclaw-android-debug
+          name: openclaw-android-release
           path: |
             ${{ steps.apk.outputs.apk_repo_path }}
             ${{ env.ANDROID_DIR }}/${{ steps.apk.outputs.apk_name }}.sha256
